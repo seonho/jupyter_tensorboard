@@ -32,19 +32,36 @@ try:
         logging.debug("Tensorboard 1.10 or above series detected")
         from tensorboard import program
 
+        from packaging import version
+        from tensorboard.version import VERSION as TB_VERSION
+
         def create_tb_app(logdir, reload_interval, purge_orphaned_data):
             argv = [
-                        "",
-                        "--logdir", logdir,
-                        "--reload_interval", str(reload_interval),
-                        "--purge_orphaned_data", str(purge_orphaned_data),
-                   ]
+                "",
+                "--logdir",
+                logdir,
+                "--reload_interval",
+                str(reload_interval),
+                "--purge_orphaned_data",
+                str(purge_orphaned_data),
+            ]
             tensorboard = program.TensorBoard()
             tensorboard.configure(argv)
-            return application.standard_tensorboard_wsgi(
-                tensorboard.flags,
-                tensorboard.plugin_loaders,
-                tensorboard.assets_zip_provider)
+            if version.parse(TB_VERSION) < version.parse("2.4"):
+                return application.standard_tensorboard_wsgi(
+                    tensorboard.flags,
+                    tensorboard.plugin_loaders,
+                    tensorboard.assets_zip_provider,
+                )
+            else:
+                (data_provider, deprecated_multiplexer) = tensorboard._make_data_provider()
+                app = application.TensorBoardWSGIApp(
+                    tensorboard.flags,
+                    tensorboard.plugin_loaders,
+                    data_provider,
+                    tensorboard.assets_zip_provider,
+                    deprecated_multiplexer,
+                )
     else:
         logging.debug("Tensorboard 0.4.x series detected")
 
@@ -138,8 +155,9 @@ def TensorBoardWSGIApp_2x(
     logdir = flags.logdir
     multiplexer = deprecated_multiplexer
     reload_interval = flags.reload_interval
+    from tensorboard.backend.event_processing import data_ingester
 
-    path_to_run = application.parse_event_files_spec(logdir)
+    path_to_run = data_ingester._parse_event_files_spec(logdir)
     if reload_interval:
         thread = start_reloading_multiplexer(
             multiplexer, path_to_run, reload_interval)
@@ -155,8 +173,8 @@ def TensorBoardWSGIApp_2x(
     from tensorboard.plugins import base_plugin
     context = base_plugin.TBContext(
         data_provider=data_provider,
-        db_connection_provider=db_connection_provider,
-        db_uri=db_uri,
+        # db_connection_provider=db_connection_provider,
+        # db_uri=db_uri,
         flags=flags,
         logdir=flags.logdir,
         multiplexer=deprecated_multiplexer,
